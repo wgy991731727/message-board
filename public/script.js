@@ -96,7 +96,7 @@ function addMessageToPage(message, prepend = false) {
     likeButton.disabled = true;
 
     try {
-      const response = await fetch(`/api/messages/${message.id}/like`, {
+      const response = await fetch(`/express/api/messages/${message.id}/like`, {
         method: 'POST',
       });
 
@@ -128,7 +128,7 @@ function addMessageToPage(message, prepend = false) {
     deleteButton.disabled = true;
 
     try {
-      const response = await fetch(`/api/messages/${message.id}`, {
+      const response = await fetch(`/express/api/messages/${message.id}`, {
         method: 'DELETE',
       });
 
@@ -162,7 +162,7 @@ async function loadMessages() {
   setStatus('正在加载留言……');
 
   try {
-    const response = await fetch('/api/messages');
+    const response = await fetch('/express/api/messages');
 
     if (!response.ok) {
       throw new Error(`服务器返回错误（${response.status}）`);
@@ -209,7 +209,7 @@ form.addEventListener('submit', async (event) => {
 
   try {
     // fetch 向同源后端发送 POST 请求。
-    const response = await fetch('/api/messages', {
+    const response = await fetch(/express'/api/messages', {
       method: 'POST',
       headers: {
         // 告诉 Express：请求正文是 JSON。
