@@ -1,67 +1,35 @@
 import express from 'express';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import pg from 'pg';
-import sqlite3 from 'sqlite3';
-
-// EdgeOne 环境下获取 __dirname 的标准写法
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
+// 强制使用 PostgreSQL，如果没配置环境变量，启动时会直接报错提示
 const usePostgres = Boolean(process.env.DATABASE_URL);
-let db;
-let pool;
 
-if (usePostgres) {
-  const { Pool } = pg;
-  pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-  });
-} else {
-  db = new sqlite3.Database(path.join(__dirname, 'database.db'), (error) => {
-    if (error) {
-      console.error('无法打开 SQLite 数据库：', error.message);
-    } else {
-      console.log('已连接到本地 SQLite 数据库。');
-    }
-  });
+if (!usePostgres) {
+  console.error('致命错误：未检测到 DATABASE_URL 环境变量，请先在 EdgeOne 控制台配置！');
+  process.exit(1);
 }
+
+const { Pool } = pg;
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
 
 app.use(express.json({ limit: '10kb' }));
-// 静态文件路径根据实际情况可能需要调整，这里保持原逻辑
-app.use(express.static(path.join(__dirname, 'public')));
 
-function all(sql, params = []) {
-  if (pool) {
-    let index = 0;
-    const postgresSql = sql.replace(/\?/g, () => `$${++index}`);
-    return pool.query(postgresSql, params).then((result) => result.rows);
-  }
-
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (error, rows) => {
-      if (error) reject(error);
-      else resolve(rows);
-    });
-  });
+// 统一使用 PostgreSQL 语法
+async function all(sql, params = []) {
+  let index = 0;
+  const postgresSql = sql.replace(/\?/g, () => `$${++index}`);
+  const result = await pool.query(postgresSql, params);
+  return result.rows;
 }
 
-function run(sql, params = []) {
-  if (pool) {
-    let index = 0;
-    const postgresSql = sql.replace(/\?/g, () => `$${++index}`);
-    return pool.query(postgresSql, params).then((result) => ({
-      changes: result.rowCount,
-    }));
-  }
-
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function (error) {
-      if (error) reject(error);
-      else resolve({ changes: this.changes, lastID: this.lastID });
-    });
-  });
+async function run(sql, params = []) {
+  let index = 0;
+  const postgresSql = sql.replace(/\?/g, () => `$${++index}`);
+  const result = await pool.query(postgresSql, params);
+  return { changes: result.rowCount };
 }
 
 async function findMessage(id) {
@@ -99,22 +67,13 @@ app.post('/api/messages', async (req, res) => {
   }
 
   try {
-    if (pool) {
-      const rows = await all(
-        `INSERT INTO messages (nickname, content)
-         VALUES (?, ?)
-         RETURNING id, nickname, content, likes, created_at`,
-        [nickname, content]
-      );
-      return res.status(201).json(rows[0]);
-    }
-
-    const result = await run(
-      'INSERT INTO messages (nickname, content) VALUES (?, ?)',
+    const rows = await all(
+      `INSERT INTO messages (nickname, content)
+       VALUES (?, ?)
+       RETURNING id, nickname, content, likes, created_at`,
       [nickname, content]
     );
-    const message = await findMessage(result.lastID);
-    res.status(201).json(message);
+    res.status(201).json(rows[0]);
   } catch (error) {
     console.error('保存留言失败：', error.message);
     res.status(500).json({ error: '保存留言失败，请稍后重试。' });
@@ -157,41 +116,19 @@ app.delete('/api/messages/:id', async (req, res) => {
   }
 });
 
-// 数据库初始化逻辑（去掉 listen，仅在模块加载时执行）
+// 初始化数据库
 async function initDB() {
   try {
-    if (pool) {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS messages (
-          id BIGSERIAL PRIMARY KEY,
-          nickname TEXT NOT NULL,
-          content TEXT NOT NULL,
-          likes INTEGER NOT NULL DEFAULT 0,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      console.log('已连接到 PostgreSQL 数据库。');
-    } else {
-      await new Promise((resolve, reject) => {
-        db.run(
-          `CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nickname TEXT NOT NULL,
-            content TEXT NOT NULL,
-            likes INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-          )`,
-          (error) => (error ? reject(error) : resolve())
-        );
-      });
-
-      const columns = await all('PRAGMA table_info(messages)');
-      if (!columns.some((column) => column.name === 'likes')) {
-        await run('ALTER TABLE messages ADD COLUMN likes INTEGER NOT NULL DEFAULT 0');
-        console.log('已为本地留言表添加点赞数字段。');
-      }
-      console.log('已连接到本地 SQLite 数据库。');
-    }
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id BIGSERIAL PRIMARY KEY,
+        nickname TEXT NOT NULL,
+        content TEXT NOT NULL,
+        likes INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('已连接到 PostgreSQL 数据库，数据表准备就绪。');
   } catch (error) {
     console.error('初始化数据库失败：', error.message);
   }
@@ -199,5 +136,5 @@ async function initDB() {
 
 initDB();
 
-// 关键：导出 app 供 EdgeOne 调用
+// 导出 app 供 EdgeOne 调用
 export default app;
