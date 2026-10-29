@@ -209,7 +209,7 @@ form.addEventListener('submit', async (event) => {
 
   try {
     // fetch 向同源后端发送 POST 请求。
-    const response = await fetch(/express'/api/messages', {
+    const response = await fetch('/express/api/messages', {
       method: 'POST',
       headers: {
         // 告诉 Express：请求正文是 JSON。
