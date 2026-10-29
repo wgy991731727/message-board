@@ -1,0 +1,10 @@
+{
+  "installCommand": "npm ci",
+  "outputDirectory": "public",
+  "nodeVersion": "22.11.0",
+  "cloudFunctions": {
+    "nodejs": {
+      "externalNodeModules": ["sqlite3"]
+    }
+  }
+}
