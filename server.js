@@ -1,11 +1,17 @@
+import { createRequire } from 'node:module';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const require = createRequire(import.meta.url);
 const express = require('express');
-const path = require('path');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const usePostgres = Boolean(process.env.DATABASE_URL);
 let db;
 let pool;
+let databaseReady;
 
 if (usePostgres) {
   const { Pool } = require('pg');
@@ -14,7 +20,9 @@ if (usePostgres) {
   });
 } else {
   const sqlite3 = require('sqlite3').verbose();
-  db = new sqlite3.Database(path.join(__dirname, 'database.db'), (error) => {
+  const databasePath =
+    process.env.SQLITE_DATABASE_PATH || path.join(__dirname, 'database.db');
+  db = new sqlite3.Database(databasePath, (error) => {
     if (error) {
       console.error('无法打开 SQLite 数据库：', error.message);
     } else {
@@ -25,6 +33,82 @@ if (usePostgres) {
 
 app.use(express.json({ limit: '10kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+function initializeDatabase() {
+  if (!databaseReady) {
+    databaseReady = (async () => {
+      if (pool) {
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS messages (
+            id BIGSERIAL PRIMARY KEY,
+            nickname TEXT NOT NULL,
+            content TEXT NOT NULL,
+            likes INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS message_likes (
+            message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+            user_id TEXT NOT NULL,
+            nickname TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (message_id, user_id)
+          )
+        `);
+        console.log('已连接到 PostgreSQL 数据库。');
+        return;
+      }
+
+      await run('PRAGMA foreign_keys = ON');
+      await new Promise((resolve, reject) => {
+        db.run(
+          `CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nickname TEXT NOT NULL,
+            content TEXT NOT NULL,
+            likes INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+          )`,
+          (error) => (error ? reject(error) : resolve())
+        );
+      });
+
+      const columns = await all('PRAGMA table_info(messages)');
+      if (!columns.some((column) => column.name === 'likes')) {
+        await run(
+          'ALTER TABLE messages ADD COLUMN likes INTEGER NOT NULL DEFAULT 0'
+        );
+        console.log('已为本地留言表添加点赞数字段。');
+      }
+      await run(`
+        CREATE TABLE IF NOT EXISTS message_likes (
+          message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL,
+          nickname TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (message_id, user_id)
+        )
+      `);
+      console.log('已连接到本地 SQLite 数据库。');
+    })().catch((error) => {
+      databaseReady = undefined;
+      throw error;
+    });
+  }
+
+  return databaseReady;
+}
+
+app.use('/api', async (req, res, next) => {
+  try {
+    await initializeDatabase();
+    next();
+  } catch (error) {
+    console.error('初始化数据库失败：', error.message);
+    res.status(500).json({ error: '数据库暂时不可用，请稍后重试。' });
+  }
+});
 
 function all(sql, params = []) {
   if (pool) {
@@ -64,22 +148,64 @@ function run(sql, params = []) {
   });
 }
 
-async function findMessage(id) {
+function withLikeInfo(message, likes, userId = '') {
+  const likeNames = likes.map((like) => like.nickname);
+  return {
+    ...message,
+    likes: Number(message.likes) + likes.length,
+    likeNames,
+    liked: Boolean(userId && likes.some((like) => like.user_id === userId)),
+  };
+}
+
+async function findMessage(id, userId = '') {
   const rows = await all(
     'SELECT id, nickname, content, likes, created_at FROM messages WHERE id = ?',
     [id]
   );
-  return rows[0];
+  if (!rows[0]) {
+    return undefined;
+  }
+
+  const likes = await all(
+    'SELECT user_id, nickname FROM message_likes WHERE message_id = ? ORDER BY created_at',
+    [id]
+  );
+  return withLikeInfo(rows[0], likes, userId);
 }
 
 app.get('/api/messages', async (req, res) => {
+  const userId =
+    typeof req.query.userId === 'string' ? req.query.userId.trim() : '';
+  if (req.query.userId !== undefined && (!userId || userId.length > 100)) {
+    return res.status(400).json({ error: '用户编号无效。' });
+  }
+
   try {
     const messages = await all(`
       SELECT id, nickname, content, likes, created_at
       FROM messages
       ORDER BY created_at DESC, id DESC
     `);
-    res.json(messages);
+    const likes = await all(
+      'SELECT message_id, user_id, nickname FROM message_likes ORDER BY created_at'
+    );
+    const likesByMessage = new Map();
+    for (const like of likes) {
+      const messageLikes = likesByMessage.get(like.message_id) || [];
+      messageLikes.push(like);
+      likesByMessage.set(like.message_id, messageLikes);
+    }
+
+    res.json(
+      messages.map((message) =>
+        withLikeInfo(
+          message,
+          likesByMessage.get(message.id) || [],
+          userId
+        )
+      )
+    );
   } catch (error) {
     console.error('读取留言失败：', error.message);
     res.status(500).json({ error: '读取留言失败，请稍后重试。' });
@@ -129,16 +255,43 @@ app.post('/api/messages/:id/like', async (req, res) => {
     return res.status(400).json({ error: '留言编号无效。' });
   }
 
+  const userId =
+    typeof req.body.userId === 'string' ? req.body.userId.trim() : '';
+  const nickname =
+    typeof req.body.nickname === 'string' ? req.body.nickname.trim() : '';
+  if (!userId || userId.length > 100) {
+    return res.status(400).json({ error: '用户编号无效。' });
+  }
+  if (nickname.length > 30) {
+    return res.status(400).json({ error: '昵称最多 30 个字。' });
+  }
+
   try {
-    const result = await run(
-      'UPDATE messages SET likes = likes + 1 WHERE id = ?',
-      [id]
-    );
-    if (result.changes === 0) {
+    if (!(await findMessage(id))) {
       return res.status(404).json({ error: '找不到这条留言。' });
     }
 
-    res.json(await findMessage(id));
+    const existingLike = await run(
+      'DELETE FROM message_likes WHERE message_id = ? AND user_id = ?',
+      [id, userId]
+    );
+    if (existingLike.changes === 0) {
+      if (pool) {
+        await pool.query(
+          `INSERT INTO message_likes (message_id, user_id, nickname)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (message_id, user_id) DO NOTHING`,
+          [id, userId, nickname || '访客']
+        );
+      } else {
+        await run(
+          'INSERT OR IGNORE INTO message_likes (message_id, user_id, nickname) VALUES (?, ?, ?)',
+          [id, userId, nickname || '访客']
+        );
+      }
+    }
+
+    res.json(await findMessage(id, userId));
   } catch (error) {
     console.error('点赞失败：', error.message);
     res.status(500).json({ error: '点赞失败，请稍后重试。' });
@@ -165,53 +318,26 @@ app.delete('/api/messages/:id', async (req, res) => {
 });
 
 async function startServer() {
-  if (pool) {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS messages (
-        id BIGSERIAL PRIMARY KEY,
-        nickname TEXT NOT NULL,
-        content TEXT NOT NULL,
-        likes INTEGER NOT NULL DEFAULT 0,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    console.log('已连接到 PostgreSQL 数据库。');
-  } else {
-    await new Promise((resolve, reject) => {
-      db.run(
-        `CREATE TABLE IF NOT EXISTS messages (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          nickname TEXT NOT NULL,
-          content TEXT NOT NULL,
-          likes INTEGER NOT NULL DEFAULT 0,
-          created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )`,
-        (error) => (error ? reject(error) : resolve())
-      );
-    });
-
-    const columns = await all('PRAGMA table_info(messages)');
-    if (!columns.some((column) => column.name === 'likes')) {
-      await run(
-        'ALTER TABLE messages ADD COLUMN likes INTEGER NOT NULL DEFAULT 0'
-      );
-      console.log('已为本地留言表添加点赞数字段。');
-    }
-    console.log('已连接到本地 SQLite 数据库。');
-  }
-
+  await initializeDatabase();
   app.listen(PORT, () => {
     console.log(`留言板服务器已启动：http://localhost:${PORT}`);
   });
 }
 
-startServer().catch((error) => {
-  console.error('初始化数据库失败：', error.message);
-  if (pool) {
-    pool.end();
-  }
-  if (db) {
-    db.close();
-  }
-  process.exitCode = 1;
-});
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+) {
+  startServer().catch((error) => {
+    console.error('初始化数据库失败：', error.message);
+    if (pool) {
+      pool.end();
+    }
+    if (db) {
+      db.close();
+    }
+    process.exitCode = 1;
+  });
+}
+
+export { app, initializeDatabase };
