@@ -228,7 +228,7 @@ form.addEventListener('submit', async (event) => {
     // 后端返回已保存的留言，将它插到列表最前面。
     addMessageToPage(result, true);
     form.reset();
-    setStatus('留言提交成功！');
+    setStatus('留言提交成功！',false, 3000);
   } catch (error) {
     console.error('提交留言失败：', error);
     setStatus(error.message || '提交失败，请稍后重试。', true);
