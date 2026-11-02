@@ -85,7 +85,6 @@ function addMessageToPage(message) {
   const time = document.createElement('time');
   time.className = 'text-xs text-slate-500 dark:text-slate-400 sm:text-sm';
 
-  // 数据库存的是 UTC 时间；加上 Z 后交给浏览器转换为本地时间。
   const createdAt = String(message.created_at);
   const dateInput = /(?:Z|[+-]\d{2}:\d{2})$/i.test(createdAt)
     ? createdAt
@@ -206,6 +205,7 @@ function addMessageToPage(message) {
     'rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-500/30 disabled:cursor-wait disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-rose-900 dark:hover:bg-rose-950/40 dark:hover:text-rose-300';
   deleteButton.type = 'button';
   deleteButton.textContent = '删除';
+  
   deleteButton.addEventListener('click', async () => {
     if (!window.confirm('确定删除这条留言吗？')) {
       return;
@@ -214,7 +214,6 @@ function addMessageToPage(message) {
     deleteButton.disabled = true;
 
     try {
-      // 获取 token 并拼接
       const urlParams = new URLSearchParams(window.location.search);
       const eoToken = urlParams.get('eo_token');
       const eoTime = urlParams.get('eo_time');
@@ -227,19 +226,9 @@ function addMessageToPage(message) {
       });
 
       if (!response.ok) {
-    const result = await response.json();
-    
-    // 判断：如果后端直接返回了数组，就用 result；如果返回的是对象，就用 result.messages
-    const messages = Array.isArray(result) ? result : result.messages; 
-    
-    if (!Array.isArray(messages)) {
-      throw new Error('服务器返回的留言数据格式无效。');
-    }
-
-    // 注意：如果后端返回纯数组，是没有分页信息的，这里要兜底处理
-    currentPage = result.page || 1;
-    totalMessages = result.total || messages.length;
-    totalPages = Math.max(1, Math.ceil(totalMessages / (result.pageSize || 10)));
+        // 注意：这里修复了，只处理删除失败的报错，不再乱解析留言列表
+        const result = await response.json();
+        throw new Error(result.error || '删除失败。');
       }
 
       setStatus('留言已删除，正在刷新列表……');
@@ -263,20 +252,16 @@ async function loadMessages(page = currentPage) {
   setStatus('正在加载留言……');
 
   try {
-    // 1. 获取当前页面的 token 参数
     const urlParams = new URLSearchParams(window.location.search);
     const eoToken = urlParams.get('eo_token');
     const eoTime = urlParams.get('eo_time');
     
-    // 2. 拼接基础 URL
     let apiUrl = `/express/api/messages?userId=${encodeURIComponent(currentUserId)}&page=${page}`;
     
-    // 3. 如果有 token，就拼接到后面
     if (eoToken && eoTime) {
       apiUrl += `&eo_token=${eoToken}&eo_time=${eoTime}`;
     }
 
-    // 4. 发送请求
     const response = await fetch(apiUrl);
 
     if (!response.ok) {
@@ -284,14 +269,19 @@ async function loadMessages(page = currentPage) {
     }
 
     const result = await response.json();
-    const messages = result.messages;
+    
+    // 🔥 修复核心：兼容你的纯数组 [] 格式和对象 {messages: []} 格式
+    const messages = Array.isArray(result) ? result : result.messages; 
+    
     if (!Array.isArray(messages)) {
       throw new Error('服务器返回的留言数据格式无效。');
     }
 
-    currentPage = result.page;
-    totalMessages = result.total;
-    totalPages = Math.max(1, Math.ceil(totalMessages / result.pageSize));
+    // 因为返回的是纯数组，没有分页信息，这里做兜底
+    currentPage = result.page || 1;
+    totalMessages = result.total || messages.length;
+    totalPages = Math.max(1, Math.ceil(totalMessages / (result.pageSize || 10)));
+    
     previousPageButton.disabled = currentPage <= 1;
     nextPageButton.disabled = currentPage >= totalPages;
     pageIndicator.textContent = `第 ${currentPage} / ${totalPages} 页，共 ${totalMessages} 条留言`;
@@ -319,7 +309,6 @@ async function loadMessages(page = currentPage) {
 }
 
 form.addEventListener('submit', async (event) => {
-  // 阻止浏览器默认提交表单并刷新页面。
   event.preventDefault();
 
   const nickname = nicknameInput.value.trim();
@@ -334,7 +323,6 @@ form.addEventListener('submit', async (event) => {
   setStatus('正在提交……');
 
   try {
-    // 获取 token 并拼接
     const urlParams = new URLSearchParams(window.location.search);
     const eoToken = urlParams.get('eo_token');
     const eoTime = urlParams.get('eo_time');
@@ -342,7 +330,7 @@ form.addEventListener('submit', async (event) => {
     if (eoToken && eoTime) {
       postUrl += `?eo_token=${eoToken}&eo_time=${eoTime}`;
     }
-    // fetch 向同源后端发送 POST 请求。
+    
     const response = await fetch(postUrl, {
       method: 'POST',
       headers: {
