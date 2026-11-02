@@ -147,10 +147,8 @@ function addMessageToPage(message) {
     likeButton.classList.toggle('dark:text-slate-300', !message.liked);
 
     if (message.likes === 0) {
-      likeSummary.hidden = true;
+      likeSummary.classList.add('hidden'); // ✅ 换成这行
       return;
-    }else{
-      likeSummary.hidden = false;
     }
 
     const remainingLikes = Math.max(
@@ -162,7 +160,7 @@ function addMessageToPage(message) {
           remainingLikes ? `，等 ${remainingLikes} 人也觉得很赞` : ''
         }`
       : `${message.likes} 人觉得很赞`;
-    likeSummary.hidden = false;
+    likeSummary.classList.remove('hidden'); // ✅ 加上这行，取消隐藏
   }
 
   updateLikePresentation(message);
