@@ -34,6 +34,13 @@ if (usePostgres) {
 app.use(express.json({ limit: '10kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+app.use((req, res, next) => {
+  if (req.url.startsWith('/express/api/')) {
+    req.url = req.url.slice('/express'.length);
+  }
+  next();
+});
+
 function initializeDatabase() {
   if (!databaseReady) {
     databaseReady = (async () => {
@@ -213,13 +220,14 @@ app.get('/api/messages', async (req, res) => {
       likesByMessage.set(messageKey, messageLikes);
     }
 
-    res.set('X-Total-Count', String(total));
-    res.set('X-Page', String(page));
-    res.json(
-      messages.map((message) =>
+    res.json({
+      messages: messages.map((message) =>
         withLikeInfo(message, likesByMessage.get(String(message.id)) || [], userId)
-      )
-    );
+      ),
+      page,
+      total,
+      pageSize: 10,
+    });
   } catch (error) {
     console.error('读取留言失败：', error.message);
     res.status(500).json({ error: '读取留言失败，请稍后重试。' });
