@@ -227,8 +227,19 @@ function addMessageToPage(message) {
       });
 
       if (!response.ok) {
-        const result = await response.json();
-        throw new Error(result.error || '删除失败。');
+    const result = await response.json();
+    
+    // 判断：如果后端直接返回了数组，就用 result；如果返回的是对象，就用 result.messages
+    const messages = Array.isArray(result) ? result : result.messages; 
+    
+    if (!Array.isArray(messages)) {
+      throw new Error('服务器返回的留言数据格式无效。');
+    }
+
+    // 注意：如果后端返回纯数组，是没有分页信息的，这里要兜底处理
+    currentPage = result.page || 1;
+    totalMessages = result.total || messages.length;
+    totalPages = Math.max(1, Math.ceil(totalMessages / (result.pageSize || 10)));
       }
 
       setStatus('留言已删除，正在刷新列表……');
