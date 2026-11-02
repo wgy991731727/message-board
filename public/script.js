@@ -11,7 +11,7 @@ let statusTimeout;
 const currentUserId =
   localStorage.getItem('message-board-user-id') || crypto.randomUUID();
 localStorage.setItem('message-board-user-id', currentUserId);
-nicknameInput.value = localStorage.getItem('message-board-nickname') || '';
+localStorage.removeItem('message-board-nickname');
 
 function applyTheme(isDark) {
   document.documentElement.classList.toggle('dark', isDark);
@@ -151,11 +151,7 @@ function addMessageToPage(message, prepend = false) {
     likeButton.disabled = true;
 
     try {
-      const currentNickname =
-        nicknameInput.value.trim() ||
-        localStorage.getItem('message-board-nickname') ||
-        '访客';
-      localStorage.setItem('message-board-nickname', currentNickname);
+      const currentNickname = nicknameInput.value.trim() || '访客';
 
       const response = await fetch(`/express/api/messages/${message.id}/like`, {
         method: 'POST',
@@ -274,7 +270,6 @@ form.addEventListener('submit', async (event) => {
   }
 
   submitButton.disabled = true;
-  localStorage.setItem('message-board-nickname', nickname);
   setStatus('正在提交……');
 
   try {
