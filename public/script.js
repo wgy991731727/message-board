@@ -170,8 +170,14 @@ function addMessageToPage(message) {
 
     try {
       const currentNickname = nicknameInput.value.trim() || '访客';
-
-      const response = await fetch(`/express/api/messages/${message.id}/like`, {
+      const urlParams = new URLSearchParams(window.location.search);
+      const eoToken = urlParams.get('eo_token');
+      const eoTime = urlParams.get('eo_time');
+      let likeUrl = `/express/api/messages/${message.id}/like`;
+      if (eoToken && eoTime) {
+        likeUrl += `?eo_token=${eoToken}&eo_time=${eoTime}`;
+      }
+      const response = await fetch(likeUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -181,7 +187,6 @@ function addMessageToPage(message) {
           nickname: currentNickname,
         }),
       });
-
       const result = await response.json();
       if (!response.ok) {
         throw new Error(result.error || '点赞失败。');
@@ -209,7 +214,15 @@ function addMessageToPage(message) {
     deleteButton.disabled = true;
 
     try {
-      const response = await fetch(`/express/api/messages/${message.id}`, {
+      // 获取 token 并拼接
+      const urlParams = new URLSearchParams(window.location.search);
+      const eoToken = urlParams.get('eo_token');
+      const eoTime = urlParams.get('eo_time');
+      let deleteUrl = `/express/api/messages/${message.id}`;
+      if (eoToken && eoTime) {
+        deleteUrl += `?eo_token=${eoToken}&eo_time=${eoTime}`;
+      }
+      const response = await fetch(deleteUrl, {
         method: 'DELETE',
       });
 
@@ -239,9 +252,21 @@ async function loadMessages(page = currentPage) {
   setStatus('正在加载留言……');
 
   try {
-    const response = await fetch(
-      `/express/api/messages?userId=${encodeURIComponent(currentUserId)}&page=${page}`
-    );
+    // 1. 获取当前页面的 token 参数
+    const urlParams = new URLSearchParams(window.location.search);
+    const eoToken = urlParams.get('eo_token');
+    const eoTime = urlParams.get('eo_time');
+    
+    // 2. 拼接基础 URL
+    let apiUrl = `/express/api/messages?userId=${encodeURIComponent(currentUserId)}&page=${page}`;
+    
+    // 3. 如果有 token，就拼接到后面
+    if (eoToken && eoTime) {
+      apiUrl += `&eo_token=${eoToken}&eo_time=${eoTime}`;
+    }
+
+    // 4. 发送请求
+    const response = await fetch(apiUrl);
 
     if (!response.ok) {
       throw new Error(`服务器返回错误（${response.status}）`);
@@ -298,14 +323,20 @@ form.addEventListener('submit', async (event) => {
   setStatus('正在提交……');
 
   try {
+    // 获取 token 并拼接
+    const urlParams = new URLSearchParams(window.location.search);
+    const eoToken = urlParams.get('eo_token');
+    const eoTime = urlParams.get('eo_time');
+    let postUrl = '/express/api/messages';
+    if (eoToken && eoTime) {
+      postUrl += `?eo_token=${eoToken}&eo_time=${eoTime}`;
+    }
     // fetch 向同源后端发送 POST 请求。
-    const response = await fetch('/express/api/messages', {
+    const response = await fetch(postUrl, {
       method: 'POST',
       headers: {
-        // 告诉 Express：请求正文是 JSON。
         'Content-Type': 'application/json',
       },
-      // 将输入内容转成 JSON 字符串，后端通过 express.json() 解析。
       body: JSON.stringify({ nickname, content }),
     });
 
