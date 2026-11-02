@@ -180,30 +180,44 @@ app.get('/api/messages', async (req, res) => {
   if (req.query.userId !== undefined && (!userId || userId.length > 100)) {
     return res.status(400).json({ error: '用户编号无效。' });
   }
+  const requestedPage = req.query.page === undefined ? 1 : Number(req.query.page);
+  if (!Number.isSafeInteger(requestedPage) || requestedPage < 1) {
+    return res.status(400).json({ error: '页码无效。' });
+  }
 
   try {
+    const countRows = await all('SELECT COUNT(*) AS total FROM messages');
+    const total = Number(countRows[0].total);
+    const totalPages = Math.ceil(total / 10);
+    const page = totalPages ? Math.min(requestedPage, totalPages) : 1;
     const messages = await all(`
       SELECT id, nickname, content, likes, created_at
       FROM messages
       ORDER BY created_at DESC, id DESC
-    `);
-    const likes = await all(
-      'SELECT message_id, user_id, nickname FROM message_likes ORDER BY created_at'
-    );
+      LIMIT ? OFFSET ?
+    `, [10, (page - 1) * 10]);
+    const likes = messages.length
+      ? await all(
+          `SELECT message_id, user_id, nickname
+           FROM message_likes
+           WHERE message_id IN (${messages.map(() => '?').join(', ')})
+           ORDER BY created_at`,
+          messages.map((message) => message.id)
+        )
+      : [];
     const likesByMessage = new Map();
     for (const like of likes) {
-      const messageLikes = likesByMessage.get(like.message_id) || [];
+      const messageKey = String(like.message_id);
+      const messageLikes = likesByMessage.get(messageKey) || [];
       messageLikes.push(like);
-      likesByMessage.set(like.message_id, messageLikes);
+      likesByMessage.set(messageKey, messageLikes);
     }
 
+    res.set('X-Total-Count', String(total));
+    res.set('X-Page', String(page));
     res.json(
       messages.map((message) =>
-        withLikeInfo(
-          message,
-          likesByMessage.get(message.id) || [],
-          userId
-        )
+        withLikeInfo(message, likesByMessage.get(String(message.id)) || [], userId)
       )
     );
   } catch (error) {
