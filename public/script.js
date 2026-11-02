@@ -149,6 +149,8 @@ function addMessageToPage(message) {
     if (message.likes === 0) {
       likeSummary.hidden = true;
       return;
+    }else{
+      likeSummary.hidden = false;
     }
 
     const remainingLikes = Math.max(
