@@ -7,7 +7,14 @@ const messagesList = document.querySelector('#messages-list');
 const themeToggle = document.querySelector('#theme-toggle');
 const themeIcon = document.querySelector('#theme-icon');
 const themeLabel = document.querySelector('#theme-label');
+const pagination = document.querySelector('#messages-pagination');
+const previousPageButton = document.querySelector('#previous-page');
+const nextPageButton = document.querySelector('#next-page');
+const pageIndicator = document.querySelector('#page-indicator');
 let statusTimeout;
+let currentPage = 1;
+let totalPages = 1;
+let totalMessages = 0;
 const currentUserId =
   localStorage.getItem('message-board-user-id') || crypto.randomUUID();
 localStorage.setItem('message-board-user-id', currentUserId);
@@ -37,6 +44,18 @@ themeToggle.addEventListener('click', () => {
   localStorage.setItem('message-board-theme', isDark ? 'dark' : 'light');
 });
 
+previousPageButton.addEventListener('click', () => {
+  if (currentPage > 1) {
+    loadMessages(currentPage - 1);
+  }
+});
+
+nextPageButton.addEventListener('click', () => {
+  if (currentPage < totalPages) {
+    loadMessages(currentPage + 1);
+  }
+});
+
 function setStatus(message, isError = false, duration = 0) {
   window.clearTimeout(statusTimeout);
   statusElement.textContent = message;
@@ -52,7 +71,7 @@ function setStatus(message, isError = false, duration = 0) {
   }
 }
 
-function addMessageToPage(message, prepend = false) {
+function addMessageToPage(message) {
   const item = document.createElement('li');
   item.className =
     'rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md sm:p-6 dark:border-slate-800 dark:bg-slate-900';
@@ -214,19 +233,15 @@ function addMessageToPage(message, prepend = false) {
   actions.append(likeButton, deleteButton);
   item.append(header, content, actions, likeSummary);
 
-  if (prepend) {
-    messagesList.prepend(item);
-  } else {
-    messagesList.append(item);
-  }
+  messagesList.append(item);
 }
 
-async function loadMessages() {
+async function loadMessages(page = currentPage) {
   setStatus('正在加载留言……');
 
   try {
     const response = await fetch(
-      `/express/api/messages?userId=${encodeURIComponent(currentUserId)}`
+      `/express/api/messages?userId=${encodeURIComponent(currentUserId)}&page=${page}`
     );
 
     if (!response.ok) {
@@ -234,6 +249,13 @@ async function loadMessages() {
     }
 
     const messages = await response.json();
+    currentPage = Number(response.headers.get('X-Page')) || page;
+    totalMessages = Number(response.headers.get('X-Total-Count')) || 0;
+    totalPages = Math.max(1, Math.ceil(totalMessages / 10));
+    pagination.classList.toggle('hidden', totalPages <= 1);
+    previousPageButton.disabled = currentPage <= 1;
+    nextPageButton.disabled = currentPage >= totalPages;
+    pageIndicator.textContent = `第 ${currentPage} / ${totalPages} 页，共 ${totalMessages} 条`;
     messagesList.replaceChildren();
 
     if (messages.length === 0) {
@@ -290,8 +312,8 @@ form.addEventListener('submit', async (event) => {
       throw new Error(result.error || `服务器返回错误（${response.status}）`);
     }
 
-    // 后端返回已保存的留言，将它插到列表最前面。
-    addMessageToPage(result, true);
+    currentPage = 1;
+    await loadMessages(1);
     form.reset();
     setStatus('留言提交成功！',false, 3000);
   } catch (error) {
