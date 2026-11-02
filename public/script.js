@@ -8,6 +8,10 @@ const themeToggle = document.querySelector('#theme-toggle');
 const themeIcon = document.querySelector('#theme-icon');
 const themeLabel = document.querySelector('#theme-label');
 let statusTimeout;
+const currentUserId =
+  localStorage.getItem('message-board-user-id') || crypto.randomUUID();
+localStorage.setItem('message-board-user-id', currentUserId);
+nicknameInput.value = localStorage.getItem('message-board-nickname') || '';
 
 function applyTheme(isDark) {
   document.documentElement.classList.toggle('dark', isDark);
@@ -85,19 +89,83 @@ function addMessageToPage(message, prepend = false) {
   content.textContent = message.content;
 
   const actions = document.createElement('div');
-  actions.className = 'mt-4 flex flex-wrap gap-2';
+  actions.className = 'mt-4 flex flex-wrap items-center gap-2';
 
   const likeButton = document.createElement('button');
   likeButton.className =
-    'rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm font-medium text-teal-800 transition hover:border-teal-300 hover:bg-teal-100 focus:outline-none focus:ring-2 focus:ring-teal-500/30 disabled:cursor-wait disabled:opacity-60 dark:border-teal-900 dark:bg-teal-950/60 dark:text-teal-300 dark:hover:bg-teal-950';
+    'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-blue-500/30 disabled:cursor-wait disabled:opacity-60';
   likeButton.type = 'button';
-  likeButton.textContent = `点赞 ${Number(message.likes) || 0}`;
+  const likeIcon = document.createElement('span');
+  likeIcon.setAttribute('aria-hidden', 'true');
+  likeIcon.textContent = '👍';
+  const likeLabel = document.createElement('span');
+  likeButton.append(likeIcon, likeLabel);
+
+  const likeSummary = document.createElement('div');
+  likeSummary.className =
+    'mt-4 flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2.5 text-sm text-blue-700 dark:bg-slate-800/70 dark:text-blue-300';
+  const likeSummaryIcon = document.createElement('span');
+  likeSummaryIcon.className = 'shrink-0';
+  likeSummaryIcon.setAttribute('aria-hidden', 'true');
+  likeSummaryIcon.textContent = '👍';
+  const likeNames = document.createElement('p');
+  likeNames.className = 'break-words';
+  likeSummary.append(likeSummaryIcon, likeNames);
+
+  function updateLikePresentation(result) {
+    message.likes = Number(result.likes) || 0;
+    message.likeNames = Array.isArray(result.likeNames) ? result.likeNames : [];
+    message.liked = Boolean(result.liked);
+    likeButton.setAttribute('aria-pressed', String(message.liked));
+    likeLabel.textContent = message.liked ? '取消赞' : '赞';
+    likeButton.classList.toggle('bg-blue-50', message.liked);
+    likeButton.classList.toggle('text-blue-700', message.liked);
+    likeButton.classList.toggle('hover:bg-blue-100', message.liked);
+    likeButton.classList.toggle('dark:bg-blue-950/50', message.liked);
+    likeButton.classList.toggle('dark:text-blue-300', message.liked);
+    likeButton.classList.toggle('bg-slate-100', !message.liked);
+    likeButton.classList.toggle('text-slate-600', !message.liked);
+    likeButton.classList.toggle('hover:bg-slate-200', !message.liked);
+    likeButton.classList.toggle('dark:bg-slate-800', !message.liked);
+    likeButton.classList.toggle('dark:text-slate-300', !message.liked);
+
+    if (message.likes === 0) {
+      likeSummary.hidden = true;
+      return;
+    }
+
+    const remainingLikes = Math.max(
+      0,
+      message.likes - message.likeNames.length
+    );
+    likeNames.textContent = message.likeNames.length
+      ? `${message.likeNames.join('、')}${
+          remainingLikes ? `，等 ${remainingLikes} 人也觉得很赞` : ''
+        }`
+      : `${message.likes} 人觉得很赞`;
+    likeSummary.hidden = false;
+  }
+
+  updateLikePresentation(message);
   likeButton.addEventListener('click', async () => {
     likeButton.disabled = true;
 
     try {
+      const currentNickname =
+        nicknameInput.value.trim() ||
+        localStorage.getItem('message-board-nickname') ||
+        '访客';
+      localStorage.setItem('message-board-nickname', currentNickname);
+
       const response = await fetch(`/express/api/messages/${message.id}/like`, {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: currentUserId,
+          nickname: currentNickname,
+        }),
       });
 
       const result = await response.json();
@@ -105,8 +173,7 @@ function addMessageToPage(message, prepend = false) {
         throw new Error(result.error || '点赞失败。');
       }
 
-      likeButton.textContent = `点赞 ${result.likes}`;
-      setStatus('点赞成功。', false, 2000);
+      updateLikePresentation(result);
     } catch (error) {
       console.error('点赞失败：', error);
       setStatus(error.message || '点赞失败，请稍后重试。', true);
@@ -149,7 +216,7 @@ function addMessageToPage(message, prepend = false) {
 
   header.append(nickname, time);
   actions.append(likeButton, deleteButton);
-  item.append(header, content, actions);
+  item.append(header, content, actions, likeSummary);
 
   if (prepend) {
     messagesList.prepend(item);
@@ -162,7 +229,9 @@ async function loadMessages() {
   setStatus('正在加载留言……');
 
   try {
-    const response = await fetch('/express/api/messages');
+    const response = await fetch(
+      `/express/api/messages?userId=${encodeURIComponent(currentUserId)}`
+    );
 
     if (!response.ok) {
       throw new Error(`服务器返回错误（${response.status}）`);
@@ -205,6 +274,7 @@ form.addEventListener('submit', async (event) => {
   }
 
   submitButton.disabled = true;
+  localStorage.setItem('message-board-nickname', nickname);
   setStatus('正在提交……');
 
   try {
