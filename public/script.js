@@ -120,7 +120,7 @@ function addMessageToPage(message) {
 
   const likeSummary = document.createElement('div');
   likeSummary.className =
-    'mt-4 flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2.5 text-sm text-blue-700 dark:bg-slate-800/70 dark:text-blue-300';
+    'mt-4 flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2.5 text-sm text-blue-700 dark:bg-slate-800/70 dark:text-blue-300 hidden'; // 默认加上 hidden
   const likeSummaryIcon = document.createElement('span');
   likeSummaryIcon.className = 'shrink-0';
   likeSummaryIcon.setAttribute('aria-hidden', 'true');
@@ -133,8 +133,10 @@ function addMessageToPage(message) {
     message.likes = Number(result.likes) || 0;
     message.likeNames = Array.isArray(result.likeNames) ? result.likeNames : [];
     message.liked = Boolean(result.liked);
+    
     likeButton.setAttribute('aria-pressed', String(message.liked));
     likeLabel.textContent = message.liked ? '取消赞' : '赞';
+    
     likeButton.classList.toggle('bg-blue-50', message.liked);
     likeButton.classList.toggle('text-blue-700', message.liked);
     likeButton.classList.toggle('hover:bg-blue-100', message.liked);
@@ -146,21 +148,31 @@ function addMessageToPage(message) {
     likeButton.classList.toggle('dark:bg-slate-800', !message.liked);
     likeButton.classList.toggle('dark:text-slate-300', !message.liked);
 
-    if (message.likes === 0) {
-      likeSummary.classList.add('hidden'); // ✅ 换成这行
+    // 🔥 核心修复：对名单去重
+    const uniqueNames = [...new Set(message.likeNames)];
+    const remainingLikes = Math.max(0, message.likes - uniqueNames.length);
+
+    // 0 赞，或者只有 1 个赞（不显示孤零零的访客），直接隐藏
+    if (message.likes === 0 || (message.likes === 1 && uniqueNames.length <= 1)) {
+      likeSummary.classList.add('hidden');
       return;
     }
 
-    const remainingLikes = Math.max(
-      0,
-      message.likes - message.likeNames.length
-    );
-    likeNames.textContent = message.likeNames.length
-      ? `${message.likeNames.join('、')}${
+    // 大于 1 个赞的情况
+    if (uniqueNames.length > 0) {
+      if (uniqueNames.length === 1) {
+        likeNames.textContent = `${uniqueNames[0]} 等 ${message.likes} 人觉得很赞`;
+      } else {
+        likeNames.textContent = `${uniqueNames.join('、')}${
           remainingLikes ? `，等 ${remainingLikes} 人也觉得很赞` : ''
-        }`
-      : `${message.likes} 人觉得很赞`;
-    likeSummary.classList.remove('hidden'); // ✅ 加上这行，取消隐藏
+        }`;
+      }
+    } else {
+      likeNames.textContent = `${message.likes} 人觉得很赞`;
+    }
+    
+    // 取消隐藏
+    likeSummary.classList.remove('hidden');
   }
 
   updateLikePresentation(message);
@@ -226,7 +238,6 @@ function addMessageToPage(message) {
       });
 
       if (!response.ok) {
-        // 注意：这里修复了，只处理删除失败的报错，不再乱解析留言列表
         const result = await response.json();
         throw new Error(result.error || '删除失败。');
       }
@@ -270,14 +281,12 @@ async function loadMessages(page = currentPage) {
 
     const result = await response.json();
     
-    // 🔥 修复核心：兼容你的纯数组 [] 格式和对象 {messages: []} 格式
     const messages = Array.isArray(result) ? result : result.messages; 
     
     if (!Array.isArray(messages)) {
       throw new Error('服务器返回的留言数据格式无效。');
     }
 
-    // 因为返回的是纯数组，没有分页信息，这里做兜底
     currentPage = result.page || 1;
     totalMessages = result.total || messages.length;
     totalPages = Math.max(1, Math.ceil(totalMessages / (result.pageSize || 10)));
