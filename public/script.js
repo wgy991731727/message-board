@@ -7,7 +7,6 @@ const messagesList = document.querySelector('#messages-list');
 const themeToggle = document.querySelector('#theme-toggle');
 const themeIcon = document.querySelector('#theme-icon');
 const themeLabel = document.querySelector('#theme-label');
-const pagination = document.querySelector('#messages-pagination');
 const previousPageButton = document.querySelector('#previous-page');
 const nextPageButton = document.querySelector('#next-page');
 const pageIndicator = document.querySelector('#page-indicator');
@@ -248,14 +247,18 @@ async function loadMessages(page = currentPage) {
       throw new Error(`服务器返回错误（${response.status}）`);
     }
 
-    const messages = await response.json();
-    currentPage = Number(response.headers.get('X-Page')) || page;
-    totalMessages = Number(response.headers.get('X-Total-Count')) || 0;
-    totalPages = Math.max(1, Math.ceil(totalMessages / 10));
-    pagination.classList.toggle('hidden', totalPages <= 1);
+    const result = await response.json();
+    const messages = result.messages;
+    if (!Array.isArray(messages)) {
+      throw new Error('服务器返回的留言数据格式无效。');
+    }
+
+    currentPage = result.page;
+    totalMessages = result.total;
+    totalPages = Math.max(1, Math.ceil(totalMessages / result.pageSize));
     previousPageButton.disabled = currentPage <= 1;
     nextPageButton.disabled = currentPage >= totalPages;
-    pageIndicator.textContent = `第 ${currentPage} / ${totalPages} 页，共 ${totalMessages} 条`;
+    pageIndicator.textContent = `第 ${currentPage} / ${totalPages} 页，共 ${totalMessages} 条留言`;
     messagesList.replaceChildren();
 
     if (messages.length === 0) {

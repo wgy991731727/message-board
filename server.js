@@ -34,6 +34,13 @@ if (usePostgres) {
 app.use(express.json({ limit: '10kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+app.use((req, res, next) => {
+  if (req.url.startsWith('/express/api/')) {
+    req.url = req.url.slice('/express'.length);
+  }
+  next();
+});
+
 function initializeDatabase() {
   if (!databaseReady) {
     databaseReady = (async () => {
