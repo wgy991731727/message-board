@@ -24,3 +24,15 @@ jobs:
 
     - name: 4. 执行自动构建（模拟测试）
       run: echo "测试通过！代码没问题！"
+
+  # ================= 下面是新增的部署任务 =================
+  deploy:
+    needs: build-and-test # 必须等前面的 build-and-test 跑完且成功，才会执行这一步
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 模拟部署到服务器
+      run: |
+        echo "测试已通过，准备部署到阿里云服务器..."
+        # 实际场景中这里会是 scp 传文件或 ssh 远程执行命令
+        echo "部署成功！"
