@@ -155,17 +155,14 @@ function run(sql, params = []) {
   });
 }
 
-function withLikeInfo(message, likes, userId = '') {
-  const likeNames = likes.map((like) => like.nickname);
+function withLikeInfo(message, legacyLikes = 0) {
   return {
     ...message,
-    likes: Number(message.likes) + likes.length,
-    likeNames,
-    liked: Boolean(userId && likes.some((like) => like.user_id === userId)),
+    likes: Number(message.likes) + Number(legacyLikes),
   };
 }
 
-async function findMessage(id, userId = '') {
+async function findMessage(id) {
   const rows = await all(
     'SELECT id, nickname, content, likes, created_at FROM messages WHERE id = ?',
     [id]
@@ -175,18 +172,13 @@ async function findMessage(id, userId = '') {
   }
 
   const likes = await all(
-    'SELECT user_id, nickname FROM message_likes WHERE message_id = ? ORDER BY created_at',
+    'SELECT COUNT(*) AS total FROM message_likes WHERE message_id = ?',
     [id]
   );
-  return withLikeInfo(rows[0], likes, userId);
+  return withLikeInfo(rows[0], likes[0].total);
 }
 
 app.get('/api/messages', async (req, res) => {
-  const userId =
-    typeof req.query.userId === 'string' ? req.query.userId.trim() : '';
-  if (req.query.userId !== undefined && (!userId || userId.length > 100)) {
-    return res.status(400).json({ error: '用户编号无效。' });
-  }
   const requestedPage = req.query.page === undefined ? 1 : Number(req.query.page);
   if (!Number.isSafeInteger(requestedPage) || requestedPage < 1) {
     return res.status(400).json({ error: '页码无效。' });
@@ -205,24 +197,21 @@ app.get('/api/messages', async (req, res) => {
     `, [10, (page - 1) * 10]);
     const likes = messages.length
       ? await all(
-          `SELECT message_id, user_id, nickname
+          `SELECT message_id, COUNT(*) AS total
            FROM message_likes
            WHERE message_id IN (${messages.map(() => '?').join(', ')})
-           ORDER BY created_at`,
+           GROUP BY message_id`,
           messages.map((message) => message.id)
         )
       : [];
     const likesByMessage = new Map();
     for (const like of likes) {
-      const messageKey = String(like.message_id);
-      const messageLikes = likesByMessage.get(messageKey) || [];
-      messageLikes.push(like);
-      likesByMessage.set(messageKey, messageLikes);
+      likesByMessage.set(String(like.message_id), like.total);
     }
 
     res.json({
       messages: messages.map((message) =>
-        withLikeInfo(message, likesByMessage.get(String(message.id)) || [], userId)
+        withLikeInfo(message, likesByMessage.get(String(message.id)) || 0)
       ),
       page,
       total,
@@ -277,43 +266,16 @@ app.post('/api/messages/:id/like', async (req, res) => {
     return res.status(400).json({ error: '留言编号无效。' });
   }
 
-  const userId =
-    typeof req.body.userId === 'string' ? req.body.userId.trim() : '';
-  const nickname =
-    typeof req.body.nickname === 'string' ? req.body.nickname.trim() : '';
-  if (!userId || userId.length > 100) {
-    return res.status(400).json({ error: '用户编号无效。' });
-  }
-  if (nickname.length > 30) {
-    return res.status(400).json({ error: '昵称最多 30 个字。' });
-  }
-
   try {
-    if (!(await findMessage(id))) {
+    const result = await run(
+      'UPDATE messages SET likes = likes + 1 WHERE id = ?',
+      [id]
+    );
+    if (result.changes === 0) {
       return res.status(404).json({ error: '找不到这条留言。' });
     }
 
-    const existingLike = await run(
-      'DELETE FROM message_likes WHERE message_id = ? AND user_id = ?',
-      [id, userId]
-    );
-    if (existingLike.changes === 0) {
-      if (pool) {
-        await pool.query(
-          `INSERT INTO message_likes (message_id, user_id, nickname)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (message_id, user_id) DO NOTHING`,
-          [id, userId, nickname || '访客']
-        );
-      } else {
-        await run(
-          'INSERT OR IGNORE INTO message_likes (message_id, user_id, nickname) VALUES (?, ?, ?)',
-          [id, userId, nickname || '访客']
-        );
-      }
-    }
-
-    res.json(await findMessage(id, userId));
+    res.json(await findMessage(id));
   } catch (error) {
     console.error('点赞失败：', error.message);
     res.status(500).json({ error: '点赞失败，请稍后重试。' });

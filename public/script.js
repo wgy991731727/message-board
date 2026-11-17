@@ -14,10 +14,6 @@ let statusTimeout;
 let currentPage = 1;
 let totalPages = 1;
 let totalMessages = 0;
-const currentUserId =
-  localStorage.getItem('message-board-user-id') || crypto.randomUUID();
-localStorage.setItem('message-board-user-id', currentUserId);
-localStorage.removeItem('message-board-nickname');
 
 function applyTheme(isDark) {
   document.documentElement.classList.toggle('dark', isDark);
@@ -111,57 +107,24 @@ function addMessageToPage(message) {
 
   const likeButton = document.createElement('button');
   likeButton.className =
-    'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-blue-500/30 disabled:cursor-wait disabled:opacity-60';
+    'inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 disabled:cursor-wait disabled:opacity-60 dark:bg-slate-800 dark:text-slate-300';
   likeButton.type = 'button';
+  likeButton.setAttribute('aria-label', '点赞');
   const likeIcon = document.createElement('span');
   likeIcon.setAttribute('aria-hidden', 'true');
   likeIcon.textContent = '👍';
   const likeLabel = document.createElement('span');
   likeButton.append(likeIcon, likeLabel);
 
-  const likeSummary = document.createElement('div');
-  likeSummary.className =
-    'mt-4 flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2.5 text-sm text-blue-700 dark:bg-slate-800/70 dark:text-blue-300';
-  const likeSummaryIcon = document.createElement('span');
-  likeSummaryIcon.className = 'shrink-0';
-  likeSummaryIcon.setAttribute('aria-hidden', 'true');
-  likeSummaryIcon.textContent = '👍';
-  const likeNames = document.createElement('p');
-  likeNames.className = 'break-words';
-  likeSummary.append(likeSummaryIcon, likeNames);
-
   function updateLikePresentation(result) {
-    message.likes = Number(result.likes) || 0;
-    message.likeNames = Array.isArray(result.likeNames) ? result.likeNames : [];
-    message.liked = Boolean(result.liked);
-    likeButton.setAttribute('aria-pressed', String(message.liked));
-    likeLabel.textContent = message.liked ? '取消赞' : '赞';
-    likeButton.classList.toggle('bg-blue-50', message.liked);
-    likeButton.classList.toggle('text-blue-700', message.liked);
-    likeButton.classList.toggle('hover:bg-blue-100', message.liked);
-    likeButton.classList.toggle('dark:bg-blue-950/50', message.liked);
-    likeButton.classList.toggle('dark:text-blue-300', message.liked);
-    likeButton.classList.toggle('bg-slate-100', !message.liked);
-    likeButton.classList.toggle('text-slate-600', !message.liked);
-    likeButton.classList.toggle('hover:bg-slate-200', !message.liked);
-    likeButton.classList.toggle('dark:bg-slate-800', !message.liked);
-    likeButton.classList.toggle('dark:text-slate-300', !message.liked);
-
-    if (message.likes === 0) {
-      likeSummary.hidden = true;
-      return;
+    const likes = Number(result.likes);
+    if (!Number.isSafeInteger(likes) || likes < 0) {
+      throw new Error('服务器返回的点赞数无效。');
     }
 
-    const remainingLikes = Math.max(
-      0,
-      message.likes - message.likeNames.length
-    );
-    likeNames.textContent = message.likeNames.length
-      ? `${message.likeNames.join('、')}${
-          remainingLikes ? `，等 ${remainingLikes} 人也觉得很赞` : ''
-        }`
-      : `${message.likes} 人觉得很赞`;
-    likeSummary.hidden = false;
+    message.likes = likes;
+    likeLabel.textContent = `赞 ${message.likes}`;
+    likeButton.setAttribute('aria-label', `点赞，累计 ${message.likes} 次`);
   }
 
   updateLikePresentation(message);
@@ -169,17 +132,8 @@ function addMessageToPage(message) {
     likeButton.disabled = true;
 
     try {
-      const currentNickname = nicknameInput.value.trim() || '访客';
-
       const response = await fetch(`/express/api/messages/${message.id}/like`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userId: currentUserId,
-          nickname: currentNickname,
-        }),
       });
 
       const result = await response.json();
@@ -230,7 +184,7 @@ function addMessageToPage(message) {
 
   header.append(nickname, time);
   actions.append(likeButton, deleteButton);
-  item.append(header, content, actions, likeSummary);
+  item.append(header, content, actions);
 
   messagesList.append(item);
 }
@@ -239,8 +193,14 @@ async function loadMessages(page = currentPage) {
   setStatus('正在加载留言……');
 
   try {
+    const urlParams = new URLSearchParams(window.location.search);
+    const requestParams = new URLSearchParams({
+      page: String(page),
+      eo_token: urlParams.get('eo_token') || '',
+      eo_time: urlParams.get('eo_time') || '',
+    });
     const response = await fetch(
-      `/express/api/messages?userId=${encodeURIComponent(currentUserId)}&page=${page}`
+      `/express/api/messages?${requestParams.toString()}`
     );
 
     if (!response.ok) {
