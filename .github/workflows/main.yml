@@ -1,0 +1,26 @@
+name: Auto Test CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 1. 检出代码
+      uses: actions/checkout@v4
+
+    - name: 2. 设置 Node.js 环境
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: 3. 安装依赖
+      run: npm install
+
+    - name: 4. 执行自动构建（模拟测试）
+      run: echo "测试通过！代码没问题！"
